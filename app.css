@@ -740,3 +740,28 @@ body.page-screen {
 }
 .tc-box.cap { opacity: .35; cursor: not-allowed; }
 .tc-card .btn.big { margin-top: 12px; width: 100%; }
+
+/* ---------- لوحة المتابعة ---------- */
+.dash-nums { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin: 0 0 12px; }
+.dash-n {
+  padding: 12px; border: 1px solid var(--line); border-radius: 10px;
+  background: var(--teal-soft); text-align: center;
+}
+.dash-n.bad { background: var(--wait-bg); border-color: var(--wait-line); }
+.dash-n b { display: block; font-size: 1.7rem; color: var(--navy); font-variant-numeric: tabular-nums; }
+.dash-n.bad b { color: var(--wait); }
+.dash-n small { color: var(--muted); font-size: .78rem; }
+.manage .card h3 { margin: 14px 0 6px; font-size: .92rem; color: var(--navy); }
+.dash-chips { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 10px; }
+.cls-chip.late { background: var(--wait-bg); border-color: var(--wait-line); color: var(--wait); font-weight: 700; }
+.dash-stage { margin-top: 10px; }
+.dash-tbl { width: 100%; border-collapse: collapse; font-size: .88rem; }
+.dash-tbl th, .dash-tbl td { padding: 6px 8px; text-align: right; border-bottom: 1px solid var(--line); }
+.dash-tbl th { font-size: .75rem; color: var(--muted); font-weight: 700; }
+.dash-tbl td { font-variant-numeric: tabular-nums; }
+.dash-tbl td:first-child { font-weight: 700; color: var(--navy); font-variant-numeric: normal; }
+.dash-tbl tr.win { background: var(--teal-soft); }
+.dash-tbl tr.win td:first-child::after { content: ' 🏆'; }
+.dash-top { margin: 0; padding: 0 20px 0 0; display: grid; gap: 4px; }
+.dash-top li { display: flex; justify-content: space-between; gap: 10px; }
+.dash-top b { color: var(--teal-2); font-variant-numeric: tabular-nums; }

@@ -923,7 +923,7 @@
     document.body.className = '';
     window.scrollTo(0, 0);
     if (P.get('p') || P.get('i') || (PARENT && !P.get('v'))) { viewParent(); return; }
-    const views = { home: viewHome, call: viewCall, screen: viewScreen, manage: viewManage, teach: viewTeach };
+    const views = { home: viewHome, call: viewCall, screen: viewScreen, manage: viewManage, teach: viewTeach, dash: viewDash };
     (views[P.get('v') || 'home'] || viewHome)();
   }
   window.addEventListener('hashchange', route);
@@ -1825,6 +1825,240 @@
   }
 
   // ---------- التوزيع والإعدادات ----------
+  // ---------- بوابة الرقم السري ----------
+  // العدّاد هنا لا داخل الصفحة: كان تغيير الصفحة يصفّره، فتُجرّب خمسة أرقام
+  // جديدة بعد كل رجوع. وهي الآن تخدم التوزيع ولوحة المتابعة معًا.
+  let pinTries = 0;
+  let pinLockedUntil = 0;
+  function pinGate(title, onOk) {
+    const inp = el('input', {
+      type: 'password', inputmode: 'numeric', autocomplete: 'off', class: 'code-input',
+      placeholder: '••••', 'aria-label': 'الرقم السري',
+    });
+    const err = el('p', { class: 'code-err', role: 'alert' });
+    const go = (e) => {
+      if (e) e.preventDefault();
+      if (Date.now() < pinLockedUntil) {
+        err.textContent = arNum(`محاولات كثيرة — انتظر ${Math.ceil((pinLockedUntil - Date.now()) / 1000)} ثانية`);
+        return;
+      }
+      if (arDigits(inp.value).trim() === adminPin()) {
+        lsSet('km-unlock', adminPin());
+        lsSet('km-admin', '1');
+        pinTries = 0;
+        onOk();
+        return;
+      }
+      pinTries++;
+      if (pinTries >= 5) { pinLockedUntil = Date.now() + 30000; pinTries = 0; err.textContent = 'محاولات كثيرة — انتظر ٣٠ ثانية'; }
+      else err.textContent = 'الرقم غير صحيح';
+      inp.select();
+    };
+    setTimeout(() => inp.focus(), 50);
+    return el('form', { class: 'card code-form', onsubmit: go },
+      el('label', null, `🔒 ${title}`),
+      el('p', { class: 'hint' }, 'اكتب الرقم السري للدخول.'),
+      el('div', { class: 'code-row' }, inp, el('button', { class: 'btn primary', type: 'submit' }, 'دخول')),
+      err,
+      el('p', { class: 'hint' }, el('a', { href: link('home') }, '← رجوع للرئيسية')));
+  }
+
+  // ---------- تحدي الفصول ----------
+  // المعادلة المعتمدة في ورقة المشروع:
+  //   المعدّل المعدَّل = (مجموع الصف + ٣ × متوسط المدرسة) ÷ (عدد الطلبة + ٣)
+  //   نسبة المشاركة   = من حصّل ١٠٠ نقطة فأكثر ÷ عدد الطلبة
+  //   النتيجة = الأول × الثاني
+  // الـ٣ المضافة تشدّ الصفوف الصغيرة نحو متوسط المدرسة فلا يقلبها طالب واحد،
+  // ونسبة المشاركة تجعل الصف يربح برفع أضعف طالب لا بزيادة أقواه.
+  const CHALLENGE_PRIOR = 3;
+  const CHALLENGE_BAR = 100;
+  function challenge(list, weekPts) {
+    const pts = (id) => sumCrit(weekPts[id]);
+    const all = list.length ? list.reduce((a, s) => a + pts(s.id), 0) / list.length : 0;
+    const byClass = new Map();
+    for (const s of list) {
+      if (!s.c) continue;
+      if (!byClass.has(s.c)) byClass.set(s.c, []);
+      byClass.get(s.c).push(s);
+    }
+    const rows = [];
+    for (const [c, ss] of byClass) {
+      const n = ss.length;
+      const sum = ss.reduce((a, s) => a + pts(s.id), 0);
+      const adj = (sum + CHALLENGE_PRIOR * all) / (n + CHALLENGE_PRIOR);
+      const share = ss.filter((s) => pts(s.id) >= CHALLENGE_BAR).length / n;
+      const i = classInfo(c);
+      rows.push({
+        c, n, sum, adj, share, score: adj * share,
+        avg: sum / n,
+        // المقارنة داخل المرحلة والفئة فقط: الأولى ما تُقاس بالثانوي
+        stage: i ? (i.girls ? 'بنات ' : 'بنين ') + arNum(i.n) : c,
+      });
+    }
+    return rows.sort((a, b) => b.score - a.score);
+  }
+
+  // ---------- لوحة المتابعة ----------
+  // تجاوب سؤالًا واحدًا: من تخلّف هذا الأسبوع؟ الأوائل لا يحتاجون لوحة.
+  function viewDash() {
+    document.body.className = 'page-manage';
+    const body = el('main', { class: 'manage' });
+    const pad = scrollPad();
+    app.append(topbar('لوحة المتابعة'), localBanner(), body, pad);
+
+    const today = ymd();
+    const wk = weekId();
+    let st = null;
+    let err = '';
+
+    async function load() {
+      err = '';
+      render();
+      try {
+        const [tot, week, gave, days] = await Promise.all([
+          readAt(`${ptRoot()}/t`),
+          readAt(`${ptRoot()}/w/${wk}`),
+          readAt(`${ptRoot()}/g/${wk}`),
+          readAt(atRoot()),
+        ]);
+        st = { tot: tot || {}, week: week || {}, gave: gave || {}, days: days || {} };
+      } catch (e) {
+        err = String((e && e.message) || e);
+      }
+      render();
+    }
+
+    const dayOf = (d) => st.days[d] || {};
+    const absentToday = () => Object.keys(dayOf(today).a || {});
+    // عدد غيابات كل طالب هذا الشهر — من كل الأيام المقروءة دفعة واحدة
+    function monthAbs() {
+      const pre = today.slice(0, 6);
+      const m = new Map();
+      for (const [d, v] of Object.entries(st.days)) {
+        if (!d.startsWith(pre)) continue;
+        for (const id of Object.keys((v && v.a) || {})) m.set(id, (m.get(id) || 0) + 1);
+      }
+      return m;
+    }
+
+    function csv(rows) {
+      const esc = (v) => `"${String(v == null ? '' : v).replace(/"/g, '""')}"`;
+      // BOM وإلا فتح إكسل العربية حروفًا مكسورة
+      const text = '﻿' + rows.map((r) => r.map(esc).join(',')).join('\r\n');
+      const url = URL.createObjectURL(new Blob([text], { type: 'text/csv;charset=utf-8' }));
+      const a = el('a', { href: url, download: `غياب-${today}.csv` });
+      document.body.append(a);
+      a.click();
+      a.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 4000);
+    }
+
+    function render() {
+      if (!unlocked()) { body.replaceChildren(pinGate('لوحة المتابعة مقفلة', render)); return; }
+      if (err) {
+        body.replaceChildren(el('section', { class: 'card' },
+          el('h2', null, 'ما قدرنا نقرأ البيانات'),
+          el('p', { class: 'hint' }, 'لو كان الرقم ٤٠١ فقواعد Firebase ما انحدّثت — الصق firebase-rules.json في Rules وانشرها.'),
+          el('p', { class: 'tc-err' }, arNum(err)),
+          el('button', { class: 'btn primary', type: 'button', onclick: load }, 'أعد المحاولة')));
+        return;
+      }
+      if (!ready || !st) { body.replaceChildren(el('p', { class: 'empty-note' }, 'جاري التحميل…')); return; }
+
+      const list = students();
+      const cls = [...new Set(list.map((s) => s.c).filter(Boolean))].sort(cmpClass);
+      const recorded = Object.keys(dayOf(today).d || {});
+      const late = cls.filter((c) => {
+        const i = classInfo(c);
+        return !recorded.includes(i ? classCode(i) : c);
+      });
+      const gaveB = Object.keys(st.gave).filter((c) => (st.gave[c] || {}).b);
+      const noGive = cls.filter((c) => {
+        const i = classInfo(c);
+        return !gaveB.includes(i ? classCode(i) : c);
+      });
+      const abs = absentToday();
+      const mAbs = monthAbs();
+      const sName = (id) => (list.find((s) => s.id === id) || {}).n || id;
+      const sCls = (id) => (list.find((s) => s.id === id) || {}).c || '';
+      const sBld = (id) => bldName((list.find((s) => s.id === id) || {}).b);
+
+      const pct = (a, b) => (b ? Math.round(((b - a) / b) * 100) : 100);
+
+      const chips = (arr, empty) => (arr.length
+        ? el('div', { class: 'dash-chips' }, arr.map((c) => el('span', { class: 'cls-chip late' }, arNum(c))))
+        : el('p', { class: 'tc-done' }, empty));
+
+      // الأوائل: ثلاثة لكل مبنى — لا قائمة كاملة مرتّبة، فالفضيحة ليست تحفيزًا
+      const tops = buildings().map((b) => {
+        const top = list.filter((s) => s.b === b.id)
+          .map((s) => ({ ...s, t: Number(st.tot[s.id]) || 0 }))
+          .sort((x, y) => y.t - x.t).slice(0, 3).filter((s) => s.t > 0);
+        return { b, top };
+      }).filter((x) => x.top.length);
+
+      const ch = challenge(list, st.week);
+      const stages = [...new Set(ch.map((r) => r.stage))];
+
+      body.replaceChildren(
+        el('section', { class: 'card' },
+          el('h2', null, arNum(`اليوم — ${dateFmt.format(new Date(now()))}`)),
+          el('div', { class: 'dash-nums' },
+            el('div', { class: 'dash-n' + (late.length ? ' bad' : '') },
+              el('b', null, arNum(`${pct(late.length, cls.length)}٪`)), el('small', null, 'من الصفوف سجّلت الحضور')),
+            el('div', { class: 'dash-n' }, el('b', null, arNum(abs.length)), el('small', null, 'غائب اليوم'))),
+          el('h3', null, 'صفوف ما سجّلت بعد'),
+          chips(late, '✓ كل الصفوف سجّلت الحضور'),
+          abs.length ? el('button', {
+            class: 'btn', type: 'button',
+            onclick: () => csv([['الاسم', 'الصف', 'المبنى', 'غيابه هذا الشهر'],
+              ...abs.map((id) => [sName(id), sCls(id), sBld(id), mAbs.get(id) || 1])]),
+          }, '⬇️ نزّل غياب اليوم (إكسل)') : ''),
+
+        el('section', { class: 'card' },
+          el('h2', null, arNum(`هذا الأسبوع — أسبوع ${ymdLabel(wk)}`)),
+          el('div', { class: 'dash-nums' },
+            el('div', { class: 'dash-n' + (noGive.length > cls.length * 0.15 ? ' bad' : '') },
+              el('b', null, arNum(`${pct(noGive.length, cls.length)}٪`)), el('small', null, 'من الصفوف منحت السلوك')),
+            el('div', { class: 'dash-n' },
+              el('b', null, arNum(Object.keys(st.week).length)), el('small', null, 'طالبًا كسب شيئًا'))),
+          el('p', { class: 'hint' }, 'لو نزلت النسبة تحت ٨٥٪ فالمشكلة في عدد البنود أو سهولة الشاشة، لا في المعلمات.'),
+          el('h3', null, 'صفوف ما منحت السلوك بعد'),
+          chips(noGive, '✓ كل الصفوف منحت')),
+
+        el('section', { class: 'card' },
+          el('h2', null, 'تحدي الفصول'),
+          el('p', { class: 'hint' }, arNum(`المقارنة داخل المرحلة فقط. المشاركة = من حصّل ${CHALLENGE_BAR} نقطة فأكثر هذا الأسبوع.`)),
+          stages.map((g) => el('div', { class: 'dash-stage' },
+            el('h3', null, arNum(g)),
+            el('table', { class: 'dash-tbl' },
+              el('thead', null, el('tr', null,
+                ['الصف', 'طلبة', 'المتوسط', 'المشاركة', 'النتيجة'].map((h) => el('th', null, h)))),
+              el('tbody', null, ch.filter((r) => r.stage === g).map((r, i) => el('tr', { class: i === 0 ? 'win' : '' },
+                el('td', null, arNum(r.c)),
+                el('td', null, arNum(r.n)),
+                el('td', null, arNum(Math.round(r.avg))),
+                el('td', null, arNum(`${Math.round(r.share * 100)}٪`)),
+                el('td', null, el('b', null, arNum(r.score.toFixed(1))))))))))),
+
+        el('section', { class: 'card' },
+          el('h2', null, 'الأوائل'),
+          el('p', { class: 'hint' }, 'ثلاثة لكل مبنى. لا تُنشر قائمة كاملة مرتّبة من الأعلى للأدنى.'),
+          tops.length ? tops.map((x) => el('div', { class: 'dash-stage' },
+            el('h3', null, x.b.name),
+            el('ol', { class: 'dash-top' }, x.top.map((s) => el('li', null,
+              el('span', null, s.n), el('b', null, arNum(s.t)))))))
+            : el('p', { class: 'hint' }, 'ما فيه نقاط بعد.')),
+
+        el('p', { class: 'hint' },
+          el('button', { class: 'btn small ghost', type: 'button', onclick: load }, '↻ حدّث')));
+    }
+
+    load();
+    subs.add(render);
+    cleanup = () => pad.dispose();
+  }
+
   // ---------- شاشة المعلمة ----------
   // صفٌّ واحد بالضبط، لا مرحلة ولا مبنى: المعلمة تمنح طلبتها هي.
   function viewTeach() {
@@ -2478,6 +2712,30 @@ ${openLink}
           grades.map((g) => row(`🖥️ ${g}`, absLink('screen', { code: g })))));
     }
 
+    // روابط النقاط: المعلمة ما تكتب رمزًا ولا تختار صفًّا — رابطها يفتح صفها
+    function pointsCard() {
+      const row = (label, url) => el('div', { class: 'link-row' },
+        el('a', { href: url, target: '_blank', rel: 'noopener' }, label),
+        el('button', { class: 'btn small', type: 'button', onclick: () => copy(url, label) }, 'نسخ'));
+      const cls = [...new Set(students().map((s) => s.c).filter(Boolean))].sort(cmpClass);
+      const count = (c) => students().filter((s) => s.c === c).length;
+      // قائمة واحدة تُلصق في الواتساب: كل صف وسطره ورابطه
+      const all = () => cls.map((c) => `${c} (${count(c)}): ${absLink('teach', { code: c })}`).join('\n');
+      return el('section', { class: 'card' },
+        el('h2', null, 'النقاط والحضور'),
+        el('p', { class: 'hint' }, 'أرسل لكل معلمة رابط صفها وحده. الرابط يفتح الحضور وبنود الأسبوع لصفها مباشرة، بلا رمز ولا كلمة سر.'),
+        row('📊 لوحة المتابعة (لك ولمشرفي المباني)', absLink('dash')),
+        el('details', keepOpen('tlinks'),
+          el('summary', null, arNum(`روابط المعلمات (${cls.length} صفًّا)`)),
+          el('p', { class: 'hint' }, 'الرابط فيه رمز المدرسة، فلا تنشره في مجموعة عامة.'),
+          el('button', {
+            class: 'btn small', type: 'button',
+            onclick: () => copy(all(), arNum(`${cls.length} رابطًا`)),
+          }, '📋 انسخ القائمة كلها'),
+          el('div', { class: 'plinks' },
+            cls.map((c) => row(arNum(`${c} — ${count(c)} طالبًا`), absLink('teach', { code: c }))))));
+    }
+
     function buildingsCard() {
       const blds = buildings();
       return el('section', { class: 'card' },
@@ -2982,41 +3240,7 @@ ${openLink}
         REMOTE ? el('p', { class: 'hint' }, 'رمز المدرسة: ', el('code', null, KEY)) : null);
     }
 
-    // شاشة القفل — تظهر إذا فيه رقم سري وهذا الجهاز ما فتحه
-    let tries = 0;
-    let lockedUntil = 0;
-    function lockCard() {
-      const inp = el('input', {
-        type: 'password', inputmode: 'numeric', autocomplete: 'off', class: 'code-input',
-        placeholder: '••••', 'aria-label': 'الرقم السري',
-      });
-      const err = el('p', { class: 'code-err', role: 'alert' });
-      const go = (e) => {
-        if (e) e.preventDefault();
-        if (Date.now() < lockedUntil) {
-          err.textContent = arNum(`محاولات كثيرة — انتظر ${Math.ceil((lockedUntil - Date.now()) / 1000)} ثانية`);
-          return;
-        }
-        if (arDigits(inp.value).trim() === adminPin()) {
-          lsSet('km-unlock', adminPin());
-          lsSet('km-admin', '1');
-          tries = 0;
-          render();
-          return;
-        }
-        tries++;
-        if (tries >= 5) { lockedUntil = Date.now() + 30000; tries = 0; err.textContent = 'محاولات كثيرة — انتظر ٣٠ ثانية'; }
-        else err.textContent = 'الرقم غير صحيح';
-        inp.select();
-      };
-      setTimeout(() => inp.focus(), 50);
-      return el('form', { class: 'card code-form', onsubmit: go },
-        el('label', null, '🔒 صفحة التوزيع مقفلة'),
-        el('p', { class: 'hint' }, 'اكتب الرقم السري للدخول.'),
-        el('div', { class: 'code-row' }, inp, el('button', { class: 'btn primary', type: 'submit' }, 'دخول')),
-        err,
-        el('p', { class: 'hint' }, el('a', { href: link('home') }, '← رجوع للرئيسية')));
-    }
+    const lockCard = () => pinGate('صفحة التوزيع مقفلة', render);
 
     // بطاقة كاملة تصير قسمًا مطويًا داخل مجموعة: أربع عشرة بطاقة كانت تطوّل الصفحة
     // بلا داعٍ، والعنوان الأصلي يصير عنوان القسم.
@@ -3054,6 +3278,7 @@ ${openLink}
         withSubs(studentsCard(),
           subNew('لصق قائمة أو كشف', 'paste', pasteBox())),
         linksCard(),
+        pointsCard(),
         withSubs(parentsCard(),
           subOf(civilCard(), 'civil')),
         withSubs(settingsCard(),
