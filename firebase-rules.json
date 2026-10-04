@@ -149,6 +149,66 @@
         }
       }
     },
+    "pt": {
+      "$school": {
+        ".read": "$school.length >= 20",
+        ".write": "$school.length >= 20 && newData.exists()",
+        "t": {
+          "$s": {
+            ".validate": "newData.isNumber() && newData.val() >= 0 && newData.val() <= 10000000 && (!data.exists() || newData.val() >= data.val())"
+          }
+        },
+        "w": {
+          "$wk": {
+            ".validate": "$wk.length === 8",
+            "$s": {
+              "$crit": {
+                ".validate": "newData.isNumber() && newData.val() >= 0 && newData.val() <= 100000 && $crit.length <= 2 && (!data.exists() || newData.val() >= data.val())"
+              }
+            }
+          }
+        },
+        "g": {
+          "$wk": {
+            "$c": {
+              "$crit": {
+                ".validate": "newData.isNumber() && $crit.length <= 2"
+              }
+            }
+          }
+        },
+        "$other": {
+          ".validate": false
+        }
+      }
+    },
+    "at": {
+      "$school": {
+        ".read": "$school.length >= 20",
+        ".write": "$school.length >= 20 && newData.exists()",
+        "$day": {
+          ".validate": "$day.length === 8",
+          "a": {
+            "$s": {
+              ".validate": "newData.val() === true"
+            }
+          },
+          "d": {
+            "$c": {
+              ".validate": "newData.isNumber()"
+            }
+          },
+          "p": {
+            "$s": {
+              ".validate": "newData.val() === true"
+            }
+          },
+          "$other": {
+            ".validate": false
+          }
+        }
+      }
+    },
     "pub": {
       "$k": {
         ".read": "$k.length >= 20",

@@ -674,3 +674,69 @@ body.page-screen {
 .sub[open] > summary { color: var(--teal-2); }
 .sub-body { padding: 4px 0 10px; display: grid; gap: 8px; }
 .sub-body > .hint:first-child { margin-top: 0; }
+
+/* ---------- شاشة المعلمة (النقاط والحضور) ---------- */
+/* صفوف كبيرة: المعلمة تسجّل الغياب بإبهامها واقفة أمام الصف، لا بالفأرة */
+.page-teach { background: var(--bg); }
+.tc { display: grid; gap: 14px; padding: 14px; max-width: 960px; margin: 0 auto; }
+.tc-card h3 { margin: 0 0 6px; font-size: .95rem; color: var(--navy); }
+.tc-err { color: var(--danger); font-weight: 700; margin: 0 0 10px; direction: ltr; text-align: right; }
+
+.tc-rows { display: grid; gap: 6px; }
+.tc-row {
+  display: flex; align-items: center; justify-content: space-between; gap: 10px;
+  min-height: 52px; padding: 8px 14px; text-align: right; font: inherit; font-size: 1.05rem;
+  background: var(--card); color: var(--ink);
+  border: 1px solid var(--line); border-left: 4px solid var(--ok, #2f9e6b);
+  border-radius: 10px; cursor: pointer;
+}
+.tc-row:hover { border-color: var(--teal-2); }
+.tc-row.out { background: var(--wait-bg); border-color: var(--wait-line); border-left-color: var(--wait); }
+.tc-row[disabled] { opacity: .5; cursor: progress; }
+.tc-nm { font-weight: 700; min-width: 0; overflow-wrap: anywhere; }
+.tc-tag { flex: none; font-size: .8rem; color: var(--muted); font-weight: 500; }
+.tc-row.out .tc-tag { color: var(--wait); font-weight: 700; }
+.tc-sum { margin: 10px 0 0; font-weight: 700; color: var(--navy); }
+.tc-done { margin: 10px 0 0; color: var(--ok, #2f9e6b); font-weight: 700; }
+
+/* تبويبات: تبويب واحد ظاهر، فلا تتكرر أسماء الصف أربع مرات في صفحة */
+.tc-tabs { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; }
+.tc-tab {
+  display: flex; align-items: center; justify-content: center; gap: 6px;
+  min-height: 46px; padding: 6px 4px; font: inherit; font-size: .92rem; font-weight: 700;
+  background: var(--card); color: var(--muted);
+  border: 1px solid var(--line); border-radius: 10px; cursor: pointer;
+}
+.tc-tab.on { background: var(--navy); color: #fff; border-color: var(--navy); }
+.tc-tab b {
+  flex: none; min-width: 1.5em; padding: 1px 5px; border-radius: 999px;
+  background: var(--teal-soft); color: var(--navy); font-size: .75rem;
+}
+.tc-tab.on b { background: rgba(255, 255, 255, .22); color: #fff; }
+
+.tc-ticks { display: grid; gap: 4px; }
+.tc-tick {
+  display: grid; grid-template-columns: 1fr auto repeat(var(--cols, 1), 58px);
+  align-items: center; gap: 8px; min-height: 48px; padding: 4px 10px;
+  border: 1px solid var(--line); border-radius: 8px; background: var(--card);
+}
+.tc-tick .tc-nm { font-weight: 500; font-size: .95rem; }
+/* الرصيد بخط ثابت العرض حتى لا ترقص الأسماء بين سطر وسطر */
+.tc-bal {
+  font-size: .8rem; font-weight: 700; color: var(--teal-2);
+  min-width: 3.4em; text-align: left; font-variant-numeric: tabular-nums;
+}
+.tc-head { min-height: 26px; padding: 0 10px; background: none; border: 0; }
+.tc-head .tc-nm, .tc-head .tc-bal { font-size: .75rem; font-weight: 700; color: var(--muted); }
+.tc-bk { font-size: .72rem; font-weight: 700; color: var(--muted); text-align: center; }
+.tc-box {
+  display: flex; align-items: center; justify-content: center; min-height: 44px;
+  border: 1px solid var(--line); border-radius: 8px; cursor: pointer;
+}
+.tc-box input { width: 20px; height: 20px; accent-color: var(--navy); cursor: pointer; }
+.tc-box.done {
+  background: var(--teal-soft); border-color: var(--teal); color: var(--teal-2);
+  font-weight: 800; font-size: 1.1rem; cursor: default;
+}
+.tc-box.cap { opacity: .35; cursor: not-allowed; }
+.tc-card .btn.big { margin-top: 12px; width: 100%; }

@@ -534,6 +534,136 @@
   }
   if (REMOTE) setInterval(inboxWatch, 3000);
 
+  // ---------- النقاط والحضور ----------
+  // تعيش كلها **خارج** schools/<KEY>، لأن كل جهاز ينزّل تلك العقدة كاملة عبر
+  // EventSource: لو سكنت هنا لنزّل كل تلفزيون سجلّ سنة كاملة في كل إقلاع.
+  // هنا نقرأ عند الطلب فقط، فلا يُضاف بايت واحد إلى مزامنة النداء.
+  //   pt/<KEY>/t/<طالب>           الرصيد (ذاكرة سريعة، تُبنى من w عند الحاجة)
+  //   pt/<KEY>/w/<أسبوع>/<طالب>/<بند>  النقاط الحقيقية: لكل (طالب، أسبوع، بند) كاتب واحد
+  //   pt/<KEY>/g/<أسبوع>/<صف>/<بند>    وسم «مُنح هذا الأسبوع» حتى لا يُمنح مرتين
+  //   at/<KEY>/<يوم>/a/<طالب>     غائب (الافتراضي حاضر: نسجّل الغياب وحده)
+  //   at/<KEY>/<يوم>/d/<صف>       وقت تسجيل الصف، وبه نعرف من لم يسجّل
+  const PTS = { a: 10, b: 50, p: 20, n: 30, x: 150, s: 50, c: 100 };
+  const CRIT = {
+    a: 'الحضور', b: 'السلوك', p: 'الاستعداد', n: 'المشاركة',
+    x: 'التميّز', s: 'الخدمة', c: 'تحدي الفصل',
+  };
+  const PART_MAX = 3; // أكثر ما ترشّحه معلمة المادة في الأسبوع
+
+  const pad2 = (n) => String(n).padStart(2, '0');
+  const ymd = (t) => {
+    const d = new Date(t == null ? now() : t);
+    return `${d.getFullYear()}${pad2(d.getMonth() + 1)}${pad2(d.getDate())}`;
+  };
+  // الأسبوع الدراسي في الكويت يبدأ الأحد، فنسمّي الأسبوع بتاريخ أحده.
+  // الظهر لا منتصف الليل: إزاحة ساعة صيفية ما تنقل اليوم.
+  const weekId = (t) => {
+    const d = new Date(t == null ? now() : t);
+    d.setHours(12, 0, 0, 0);
+    d.setDate(d.getDate() - d.getDay());
+    return ymd(d);
+  };
+  const ymdLabel = (s) => `${arNum(Number(s.slice(6, 8)))}/${arNum(Number(s.slice(4, 6)))}`;
+
+  function nodeGet(tree, path) {
+    let o = tree;
+    for (const k of String(path || '').split('/').filter(Boolean)) {
+      if (!o || typeof o !== 'object') return undefined;
+      o = o[k];
+    }
+    return o;
+  }
+  function nodeSet(tree, path, val) {
+    const parts = String(path || '').split('/').filter(Boolean);
+    if (!parts.length) return;
+    let o = tree;
+    for (const k of parts.slice(0, -1)) {
+      if (BAD_KEY.has(k)) return;
+      if (!o[k] || typeof o[k] !== 'object') o[k] = {};
+      o = o[k];
+    }
+    const last = parts[parts.length - 1];
+    if (BAD_KEY.has(last)) return;
+    if (val === null || val === undefined) delete o[last];
+    else o[last] = val;
+  }
+
+  // في الوضع التجريبي (بلا رمز مدرسة) نحفظ على الجهاز، حتى تُجرّب الشاشات كلها
+  const LS_PT = 'km-points-v1';
+  let ptLocal = null;
+  const ptTree = () => {
+    if (!ptLocal) { try { ptLocal = JSON.parse(lsGet(LS_PT) || '{}'); } catch { ptLocal = {}; } }
+    return ptLocal;
+  };
+
+  async function readAt(path) {
+    if (!REMOTE) return clone(nodeGet(ptTree(), path)) ?? null;
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), 12000);
+    try {
+      const r = await fetch(`${DB}/${path}.json`, { cache: 'no-store', signal: ctrl.signal });
+      syncClock(r);
+      if (!r.ok) {
+        let why = '';
+        try { const j = await r.json(); why = j && j.error ? String(j.error) : ''; } catch { /* بلا نص */ }
+        throw new Error(`${r.status}${why ? ' — ' + why : ''}`);
+      }
+      return await r.json();
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
+  // ترفع ما نجح ونرمي ما فشل: من ينادي هذه يعرض الخطأ برقمه، لا «تعذّر الحفظ»
+  async function writeAt(method, path, data) {
+    if (!REMOTE) {
+      const t = ptTree();
+      const d = localize(data);
+      if (method === 'PATCH') for (const [k, v] of Object.entries(d || {})) nodeSet(t, path + '/' + k, v);
+      else nodeSet(t, path, method === 'DELETE' ? null : d);
+      lsSet(LS_PT, JSON.stringify(t));
+      return true;
+    }
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), 12000);
+    try {
+      const r = await fetch(`${DB}/${path}.json`, {
+        method, signal: ctrl.signal,
+        body: method === 'DELETE' ? undefined : JSON.stringify(data),
+      });
+      syncClock(r);
+      if (!r.ok) {
+        let why = '';
+        try { const j = await r.json(); why = j && j.error ? String(j.error) : ''; } catch { /* بلا نص */ }
+        throw new Error(`${r.status}${why ? ' — ' + why : ''}`);
+      }
+      return true;
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
+  const ptRoot = () => `pt/${encodeURIComponent(KEY || 'demo')}`;
+  const atRoot = () => `at/${encodeURIComponent(KEY || 'demo')}`;
+  const sumCrit = (o) => Object.values(o || {}).reduce((a, v) => a + (Number(v) || 0), 0);
+
+  // منح النقاط: دفعة واحدة (PATCH متعدد المسارات) فلا تُنفّذ نصفها.
+  // القيم الحقيقية في w/<أسبوع>؛ وt رصيدٌ مشتق نكتبه معها لتعرض الشاشات بسرعة.
+  // ولأن لكل (طالب، أسبوع، بند) كاتبًا واحدًا، لا تتسابق معلمتان على نفس المفتاح.
+  async function award(rows, marks) {
+    const wk = weekId();
+    const patch = {};
+    for (const r of rows) {
+      if (!r || !r.sid || !r.k || !(r.p > 0)) continue;
+      patch[`w/${wk}/${r.sid}/${r.k}`] = (Number(r.was) || 0) + r.p;
+      patch[`t/${r.sid}`] = (Number(r.total) || 0) + r.p;
+    }
+    for (const [cls, k] of marks || []) patch[`g/${wk}/${cls}/${k}`] = SV;
+    if (!Object.keys(patch).length) return 0;
+    await writeAt('PATCH', ptRoot(), patch);
+    return rows.length;
+  }
+
   // ---------- رموز الدخول ----------
   const NUMW = {
     one: 1, two: 2, three: 3, four: 4, five: 5, six: 6, seven: 7, eight: 8, nine: 9, ten: 10, eleven: 11, twelve: 12,
@@ -793,7 +923,7 @@
     document.body.className = '';
     window.scrollTo(0, 0);
     if (P.get('p') || P.get('i') || (PARENT && !P.get('v'))) { viewParent(); return; }
-    const views = { home: viewHome, call: viewCall, screen: viewScreen, manage: viewManage };
+    const views = { home: viewHome, call: viewCall, screen: viewScreen, manage: viewManage, teach: viewTeach };
     (views[P.get('v') || 'home'] || viewHome)();
   }
   window.addEventListener('hashchange', route);
@@ -1695,6 +1825,261 @@
   }
 
   // ---------- التوزيع والإعدادات ----------
+  // ---------- شاشة المعلمة ----------
+  // صفٌّ واحد بالضبط، لا مرحلة ولا مبنى: المعلمة تمنح طلبتها هي.
+  function viewTeach() {
+    document.body.className = 'page-teach';
+    const code = P.get('code') || '';
+
+    if (!code) {
+      const body = el('main', { class: 'home' });
+      app.append(topbar('النقاط — اختر الصف'), localBanner(), body);
+      const render = () => {
+        const cls = [...new Set(students().map((s) => s.c).filter(Boolean))].sort(cmpClass);
+        body.replaceChildren(
+          el('p', { class: 'hint' }, 'اختر صفك. الرابط اللي وصلك يفتحه مباشرة في المرات القادمة:'),
+          el('div', { class: 'pick' }, cls.map((c) => el('a', {
+            class: 'pick-b', href: link('teach', { code: c }),
+          }, el('strong', null, arNum(c)),
+             el('small', null, arNum(`${students().filter((s) => s.c === c).length} طالبًا`))))));
+      };
+      subs.add(render);
+      render();
+      return;
+    }
+
+    const want = (() => { const i = classInfo(code); return i ? classCode(i) : norm(code); })();
+    const mine = () => students()
+      .filter((s) => { const i = classInfo(s.c); return (i ? classCode(i) : norm(s.c)) === want; })
+      .sort((a, b) => cmpText(a.n, b.n));
+
+    const today = ymd();
+    const wk = weekId();
+    let st = null;        // { tot, week, day } المقروءة عند الطلب
+    let err = '';
+    let busy = false;
+    let tab = 'a';
+    const draft = { b: new Set(), p: new Set(), n: new Set() };
+
+    const bar = topbar(arNum(`نقاط ${code}`));
+    const body = el('main', { class: 'tc' });
+    const pad = scrollPad();
+    app.append(bar, localBanner(), body, pad);
+
+    async function load() {
+      err = '';
+      render();
+      try {
+        const [tot, week, day] = await Promise.all([
+          readAt(`${ptRoot()}/t`),
+          readAt(`${ptRoot()}/w/${wk}`),
+          readAt(`${atRoot()}/${today}`),
+        ]);
+        st = { tot: tot || {}, week: week || {}, day: day || {} };
+      } catch (e) {
+        err = String((e && e.message) || e);
+      }
+      render();
+    }
+
+    const total = (id) => Number((st && st.tot[id]) || 0);
+    const got = (id, k) => Number(nodeGet(st && st.week, `${id}/${k}`)) || 0;
+    const absent = (id) => nodeGet(st && st.day, `a/${id}`) === true;
+    const paid = (id) => nodeGet(st && st.day, `p/${id}`) === true;
+    const doneAt = () => Number(nodeGet(st && st.day, `d/${want}`)) || 0;
+
+    // الغياب يُكتب لحظة الضغط: هو السجل الرسمي، ما ينتظر زرًا
+    async function toggleAbsent(s) {
+      if (busy) return;
+      busy = true;
+      const was = absent(s.id);
+      try {
+        await writeAt(was ? 'DELETE' : 'PUT', `${atRoot()}/${today}/a/${s.id}`, was ? undefined : true);
+        nodeSet(st.day, `a/${s.id}`, was ? null : true);
+        // رجع حاضرًا بعد ما أُنهي التسجيل: ناخذ له نقاط حضوره الآن، فلا يُظلم
+        if (was && doneAt() && !paid(s.id)) {
+          await award([{ sid: s.id, k: 'a', p: PTS.a, was: got(s.id, 'a'), total: total(s.id) }]);
+          await writeAt('PUT', `${atRoot()}/${today}/p/${s.id}`, true);
+          nodeSet(st.week, `${s.id}/a`, got(s.id, 'a') + PTS.a);
+          st.tot[s.id] = total(s.id) + PTS.a;
+          nodeSet(st.day, `p/${s.id}`, true);
+          toast(arNum(`${s.n}: حاضر، و${PTS.a} نقاط حضور`), 'ok');
+        }
+      } catch (e) {
+        toast(`ما انحفظ (${String((e && e.message) || e)})`, 'err');
+      } finally {
+        busy = false;
+        render();
+      }
+    }
+
+    // إنهاء التسجيل: يمنح الحاضرين غير المدفوعين، ويختم اليوم بوقت التسجيل
+    async function finishDay() {
+      if (busy || !st) return;
+      const due = mine().filter((s) => !absent(s.id) && !paid(s.id));
+      busy = true;
+      render();
+      try {
+        await award(due.map((s) => ({ sid: s.id, k: 'a', p: PTS.a, was: got(s.id, 'a'), total: total(s.id) })));
+        const mark = { [`${today}/d/${want}`]: SV };
+        for (const s of due) mark[`${today}/p/${s.id}`] = true;
+        await writeAt('PATCH', atRoot(), mark);
+        for (const s of due) {
+          nodeSet(st.week, `${s.id}/a`, got(s.id, 'a') + PTS.a);
+          st.tot[s.id] = total(s.id) + PTS.a;
+          nodeSet(st.day, `p/${s.id}`, true);
+        }
+        nodeSet(st.day, `d/${want}`, now());
+        const n = mine().filter((s) => absent(s.id)).length;
+        toast(arNum(n ? `تم — ${n} غائب، والباقي أخذوا نقاط الحضور` : 'تم — الصف كامل، والكل أخذ نقاط الحضور'), 'ok');
+      } catch (e) {
+        toast(`ما انحفظ (${String((e && e.message) || e)})`, 'err');
+      } finally {
+        busy = false;
+        render();
+      }
+    }
+
+    // بنود الأسبوع: الحارس هو w/<أسبوع>/<طالب>/<بند> — من أُعطي لا يُعطى ثانية
+    async function saveWeek(keys) {
+      if (busy || !st) return;
+      const rows = [];
+      for (const k of keys) {
+        for (const id of draft[k]) {
+          if (got(id, k)) continue;
+          rows.push({ sid: id, k, p: PTS[k], was: 0, total: total(id) });
+        }
+      }
+      if (!rows.length) { toast('ما اخترت أحدًا', 'err'); return; }
+      busy = true;
+      render();
+      try {
+        await award(rows, keys.map((k) => [want, k]));
+        for (const r of rows) {
+          nodeSet(st.week, `${r.sid}/${r.k}`, r.p);
+          st.tot[r.sid] = total(r.sid) + r.p;
+        }
+        for (const k of keys) draft[k].clear();
+        toast(arNum(`تم منح ${rows.length} طالبًا`), 'ok');
+      } catch (e) {
+        toast(`ما انحفظ (${String((e && e.message) || e)})`, 'err');
+      } finally {
+        busy = false;
+        render();
+      }
+    }
+
+    // مربع واحد لبند واحد. الأسماء تُعرض مرة واحدة في كل تبويب، والمربعات بجانبها:
+    // صفٌّ فيه ٢٥ طالبًا كان يصير أربع قوائم ومئة سطر على جوال المعلمة.
+    function box(k, s) {
+      const had = got(s.id, k);
+      // المُنح يظهر ✓ وحده: مربع مؤشّر معطّل يوحي أنها تقدر تفكّه
+      if (had) return el('span', { class: 'tc-box done', title: arNum(`${CRIT[k]} — ${had} نقطة`) }, '✓');
+      const cap = k === 'n' && !draft[k].has(s.id) && draft[k].size >= PART_MAX;
+      return el('label', { class: 'tc-box' + (cap ? ' cap' : ''), title: CRIT[k] },
+        el('input', {
+          type: 'checkbox', checked: draft[k].has(s.id), disabled: cap || busy,
+          'aria-label': `${CRIT[k]} — ${s.n}`,
+          onchange: (e) => {
+            if (e.target.checked) draft[k].add(s.id); else draft[k].delete(s.id);
+            render();
+          },
+        }));
+    }
+
+    // رأس الأعمدة يحمل أسماء البنود مرة واحدة، فيبقى للاسم عرضٌ يكفيه سطرًا
+    function tickTable(list, keys) {
+      return el('div', { class: 'tc-ticks', style: `--cols:${keys.length}` },
+        el('div', { class: 'tc-tick tc-head' },
+          el('span', { class: 'tc-nm' }, 'الطالب'),
+          el('span', { class: 'tc-bal' }, 'الرصيد'),
+          keys.map((k) => el('span', { class: 'tc-bk' }, arNum(`${CRIT[k]} ${PTS[k]}`)))),
+        list.map((s) => el('div', { class: 'tc-tick' },
+          el('span', { class: 'tc-nm' }, s.n),
+          el('span', { class: 'tc-bal' }, arNum(total(s.id))),
+          keys.map((k) => box(k, s)))));
+    }
+
+    function card(title, note, ...kids) {
+      return el('section', { class: 'card tc-card' },
+        el('h2', null, title),
+        note ? el('p', { class: 'hint' }, note) : '',
+        ...kids.filter(Boolean));
+    }
+
+    function render() {
+      const list = mine();
+      if (err) {
+        body.replaceChildren(card('ما قدرنا نقرأ النقاط',
+          'لو كان الرقم ٤٠١ فقواعد Firebase ما انحدّثت بعد — الصق firebase-rules.json في Rules وانشرها.',
+          el('p', { class: 'tc-err' }, arNum(err)),
+          el('button', { class: 'btn primary', type: 'button', onclick: load }, 'أعد المحاولة')));
+        return;
+      }
+      if (!ready || !st) {
+        body.replaceChildren(el('p', { class: 'empty-note' }, 'جاري التحميل…'));
+        return;
+      }
+      if (!list.length) {
+        body.replaceChildren(card(arNum(`ما فيه طلبة في ${code}`),
+          'تأكد من رمز الصف في الرابط، أو أضف طلبة الصف من صفحة التوزيع.',
+          el('a', { class: 'btn', href: link('teach') }, 'اختر صفًا آخر')));
+        return;
+      }
+
+      const abs = list.filter((s) => absent(s.id));
+      const done = doneAt();
+      const left = (k) => list.filter((s) => !got(s.id, k)).length;
+
+      const tabs = [
+        { id: 'a', label: 'الحضور', badge: done ? '✓' : arNum(list.length - abs.length) },
+        { id: 'w', label: 'نقاط الأسبوع', badge: left('b') ? arNum(left('b')) : '✓' },
+        { id: 'n', label: 'الترشيح', badge: left('n') < list.length ? '✓' : '' },
+      ];
+      const nav = el('nav', { class: 'tc-tabs', 'aria-label': 'الأقسام' },
+        tabs.map((t) => el('button', {
+          class: 'tc-tab' + (tab === t.id ? ' on' : ''), type: 'button',
+          'aria-pressed': tab === t.id ? 'true' : 'false',
+          onclick: () => { tab = t.id; render(); window.scrollTo(0, 0); },
+        }, el('span', null, t.label), t.badge ? el('b', null, t.badge) : '')));
+
+      let panel;
+      if (tab === 'a') {
+        panel = card(arNum(`الحضور — ${dateFmt.format(new Date(now()))}`),
+          done ? 'سُجّل. لو صحّحت غيابًا الآن يُحدَّث السجل فورًا.' : 'اضغط على اسم الغائب فقط. الباقي حاضرون.',
+          el('div', { class: 'tc-rows' }, list.map((s) => el('button', {
+            class: 'tc-row' + (absent(s.id) ? ' out' : ''), type: 'button', disabled: busy,
+            onclick: () => toggleAbsent(s),
+          }, el('span', { class: 'tc-nm' }, s.n),
+             el('span', { class: 'tc-tag' }, absent(s.id) ? 'غائب' : 'حاضر')))),
+          el('p', { class: 'tc-sum' }, arNum(abs.length
+            ? `${abs.length} غائب من ${list.length}`
+            : `الصف كامل — ${list.length} طالبًا`)),
+          done
+            ? el('p', { class: 'tc-done' }, arNum(`✓ سُجّل الحضور ${timeFmt.format(new Date(done))}`))
+            : el('button', { class: 'btn primary big', type: 'button', disabled: busy, onclick: finishDay },
+                '✅ أنهيت تسجيل الحضور'));
+      } else if (tab === 'w') {
+        panel = card('نقاط الأسبوع', arNum(`أسبوع ${ymdLabel(wk)} — سلوك ${PTS.b} نقطة، استعداد ${PTS.p} نقطة`),
+          tickTable(list, ['b', 'p']),
+          left('b') || left('p')
+            ? el('button', { class: 'btn primary big', type: 'button', disabled: busy, onclick: () => saveWeek(['b', 'p']) },
+                'احفظ نقاط الأسبوع')
+            : el('p', { class: 'tc-done' }, '✓ منحت كل الصف هذا الأسبوع'));
+      } else {
+        panel = card('ترشيح المشاركة', arNum(`حتى ${PART_MAX} طلبة في الأسبوع، ${PTS.n} نقطة لكل واحد`),
+          tickTable(list, ['n']),
+          el('button', { class: 'btn primary big', type: 'button', disabled: busy, onclick: () => saveWeek(['n']) },
+            'احفظ الترشيح'));
+      }
+      body.replaceChildren(nav, panel);
+    }
+
+    load();
+    subs.add(render);
+    cleanup = () => pad.dispose();
+  }
+
   function viewManage() {
     document.body.className = 'page-manage';
     const body = el('main', { class: 'manage' });
