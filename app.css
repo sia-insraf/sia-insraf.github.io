@@ -765,3 +765,11 @@ body.page-screen {
 .dash-top { margin: 0; padding: 0 20px 0 0; display: grid; gap: 4px; }
 .dash-top li { display: flex; justify-content: space-between; gap: 10px; }
 .dash-top b { color: var(--teal-2); font-variant-numeric: tabular-nums; }
+.tc-head .tc-bk { display: grid; gap: 2px; justify-items: center; }
+.tc-all {
+  font: inherit; font-size: .68rem; font-weight: 700; line-height: 1;
+  padding: 3px 7px; border-radius: 999px; cursor: pointer;
+  background: var(--card); color: var(--teal-2); border: 1px solid var(--teal);
+}
+.tc-all.on { background: var(--navy); color: #fff; border-color: var(--navy); }
+.tc-all[disabled] { opacity: .4; cursor: not-allowed; }

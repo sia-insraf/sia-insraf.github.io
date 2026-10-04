@@ -2221,13 +2221,29 @@
         }));
     }
 
-    // رأس الأعمدة يحمل أسماء البنود مرة واحدة، فيبقى للاسم عرضٌ يكفيه سطرًا
+    // رأس الأعمدة يحمل أسماء البنود مرة واحدة، فيبقى للاسم عرضٌ يكفيه سطرًا.
+    // و«الكل» في الرأس: مرشد الصف يبدأ بالجميع ثم يزيل من وقع منه شيء —
+    // هذا هو سير العمل الحقيقي، وبدونه يضغط ٢٥ مربعًا كل خميس فيملّ ويترك.
     function tickTable(list, keys) {
+      const head = (k) => {
+        const open = list.filter((s) => !got(s.id, k));
+        const all = open.length > 0 && open.every((s) => draft[k].has(s.id));
+        return el('span', { class: 'tc-bk' },
+          el('span', null, arNum(`${CRIT[k]} ${PTS[k]}`)),
+          open.length && k !== 'n' ? el('button', {
+            class: 'tc-all' + (all ? ' on' : ''), type: 'button', disabled: busy,
+            onclick: () => {
+              if (all) draft[k].clear();
+              else for (const s of open) draft[k].add(s.id);
+              render();
+            },
+          }, all ? 'امسح' : 'الكل') : '');
+      };
       return el('div', { class: 'tc-ticks', style: `--cols:${keys.length}` },
         el('div', { class: 'tc-tick tc-head' },
           el('span', { class: 'tc-nm' }, 'الطالب'),
           el('span', { class: 'tc-bal' }, 'الرصيد'),
-          keys.map((k) => el('span', { class: 'tc-bk' }, arNum(`${CRIT[k]} ${PTS[k]}`)))),
+          keys.map(head)),
         list.map((s) => el('div', { class: 'tc-tick' },
           el('span', { class: 'tc-nm' }, s.n),
           el('span', { class: 'tc-bal' }, arNum(total(s.id))),
