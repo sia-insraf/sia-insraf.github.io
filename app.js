@@ -1316,7 +1316,9 @@
 
     lsSet('km-call-code', code);
     let q = '';
-    let onlyCalled = false;
+    // 'all' أو حالة واحدة: called ينتظر، out خرج، none لم يُنادَ بعد
+    let filt = 'all';
+    const filtering = () => filt !== 'all';
 
     const search = el('input', {
       class: 'search', type: 'search', placeholder: 'ابحث باسم الطالب أو العائلة…',
@@ -1383,24 +1385,35 @@
       const all = [...scope.ids].map((id) => ({ id, ...root.students[id], ...stateOf(id) }));
       const nCalled = all.filter((s) => s.st === 'called').length;
       const nOut = all.filter((s) => s.st === 'out').length;
+      // الأرقام الثلاثة هي الأزرار: المسؤول في الموقف يشير إلى الرقم الذي يريده
+      const stat = (k, label, n, dot) => el('button', {
+        class: 'sum-b' + (filt === k ? ' on' : ''), type: 'button',
+        'aria-pressed': String(filt === k),
+        title: filt === k ? 'اعرض الكل' : `اعرض ${label} فقط`,
+        onclick: () => {
+          filt = filt === k ? 'all' : k;
+          render();
+          window.scrollTo({ top: 0, behavior: 'smooth' });
+        },
+      }, el('span', { class: 'dot ' + dot }), label, ' ', el('b', null, String(n)));
       summary.replaceChildren(
         el('span', { class: 'sum-stats' },
-          el('span', { class: 'dot called' }), 'ينتظر ', el('b', null, String(nCalled)),
-          el('span', { class: 'dot out' }), 'خرج ', el('b', null, String(nOut)),
-          el('span', { class: 'dot none' }), 'الباقي ', el('b', null, String(all.length - nCalled - nOut))),
-        el('button', {
-          class: 'chip' + (onlyCalled ? ' on' : ''), type: 'button', 'aria-pressed': String(onlyCalled),
-          onclick: () => { onlyCalled = !onlyCalled; render(); },
-        }, onlyCalled ? 'عرض الكل' : 'المنتظرين فقط'));
+          stat('called', 'ينتظر', nCalled, 'called'),
+          stat('out', 'خرج', nOut, 'out'),
+          stat('none', 'الباقي', all.length - nCalled - nOut, 'none')),
+        filtering() ? el('button', {
+          class: 'chip on', type: 'button',
+          onclick: () => { filt = 'all'; render(); },
+        }, '✕ عرض الكل') : '');
 
       const nq = norm(q);
-      const rows = all.filter((s) => (!onlyCalled || s.st === 'called')
+      const rows = all.filter((s) => (filt === 'all' || s.st === filt)
         && (!nq || norm(s.n).includes(nq) || norm(s.c).includes(nq)));
 
       // أزرار الانتقال السريع للصفوف
       const classes = [...new Set(rows.map((s) => s.c))].sort(cmpClass);
       const jumpClasses = [...new Set(all.map((s) => s.c))].sort(cmpClass);
-      jump.replaceChildren(...(onlyCalled ? [] : jumpClasses.map((c) => el('button', {
+      jump.replaceChildren(...(filt === 'called' ? [] : (filt === 'all' ? jumpClasses : classes).map((c) => el('button', {
         class: 'tab', type: 'button',
         onclick: () => {
           const h = list.querySelector(`[data-class="${CSS.escape(c)}"]`);
@@ -1410,7 +1423,7 @@
 
       // الأخ يجي على باب مبنى أخيه أحيانًا. البحث كان يقف عند حدود المبنى
       // فيرد «ما فيه نتائج»، والصحيح أن نعرضه ومعه اسم مبناه
-      const others = (!onlyCalled && nq.length >= 2 ? students() : [])
+      const others = (!filtering() && nq.length >= 2 ? students() : [])
         .filter((s) => !scope.ids.has(s.id) && (norm(s.n).includes(nq) || norm(s.c).includes(nq)))
         .map((s) => ({ ...s, ...stateOf(s.id) }))
         .sort((a, b) => cmpText(a.n, b.n))
@@ -1420,7 +1433,8 @@
         const meta = s.st === 'called' ? `${s.late ? '⚠️ تأخّر' : s.r ? '👪 طلب ولي الأمر' : '⏳ ينتظر'} · ${ago(s.t)}`
           : s.st === 'out' ? `✓ خرج ${timeFmt.format(s.o)}`
           : showB ? `${s.c} · ${bldName(s.b)}`
-          : (onlyCalled || nq ? s.c : '');
+          // القائمة المسطّحة وحدها تحتاج اسم الصف؛ المجموعات تحمله في رأسها
+          : (filt === 'called' || nq ? s.c : '');
         // الطالب المنادى لا يُعاد نداؤه بلمسة على اسمه — الإجراءان صريحان تحته
         const head = s.st === 'called'
           ? el('div', { class: 'nt-main is-called' },
@@ -1456,21 +1470,24 @@
 
       if (!rows.length) {
         list.append(el('p', { class: 'empty-note' },
-          onlyCalled ? 'ما فيه أحد ينتظر الحين.'
+          filt === 'called' ? 'ما فيه أحد ينتظر الحين.'
+            : filt === 'none' ? '✓ ما بقي أحد — كل الطلبة نودوا.'
+            : filt === 'out' ? 'ما خرج أحد بعد.'
             : others.length ? 'ما فيه نتائج في هذا المبنى.' : 'ما فيه نتائج.'));
         elsewhere();
         return;
       }
 
-      if (onlyCalled) {
+      if (filt === 'called') {
         list.append(el('div', { class: 'ngrid' }, rows.sort((a, b) => b.t - a.t).map((s) => tile(s))));
         return;
       }
       for (const c of classes) {
         const items = rows.filter((s) => s.c === c).sort((a, b) => cmpText(a.n, b.n));
-        const outN = items.filter((s) => s.st === 'out').length;
+        const full = all.filter((s) => s.c === c);
+        const outN = full.filter((s) => s.st === 'out').length;
         list.append(
-          el('h4', { class: 'group', 'data-class': c }, c, el('small', null, `${outN}/${items.length} خرج`)),
+          el('h4', { class: 'group', 'data-class': c }, c, el('small', null, `${outN}/${full.length} خرج`)),
           el('div', { class: 'ngrid' }, items.map((s) => tile(s))));
       }
       elsewhere();

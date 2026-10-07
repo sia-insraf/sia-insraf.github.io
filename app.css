@@ -258,9 +258,20 @@ input:focus, select:focus, textarea:focus, .btn:focus-visible, button:focus-visi
 .tabs.dim { opacity: .45; }
 .chip.on { background: var(--wait); color: #fff; border-color: var(--wait); }
 .summary { display: flex; align-items: center; justify-content: space-between; gap: 8px; font-size: .92rem; color: var(--muted); }
-.sum-stats { white-space: nowrap; font-size: .85rem; }
-.sum-stats b { color: var(--ink); margin-inline-end: 4px; }
-.sum-stats .dot { margin-inline: 2px 4px; }
+.sum-stats { display: flex; gap: 4px; font-size: .85rem; }
+.sum-stats b { color: var(--ink); font-variant-numeric: tabular-nums; }
+.sum-stats .dot { margin-inline: 0 5px; }
+/* الأرقام نفسها هي الأزرار: المسؤول يشير إلى الرقم الذي يريده */
+.sum-b {
+  display: flex; align-items: center; white-space: nowrap;
+  font: inherit; font-size: .85rem; color: var(--muted);
+  min-height: 34px; padding: 2px 9px; border-radius: 999px;
+  background: transparent; border: 1px solid transparent; cursor: pointer;
+}
+.sum-b:hover { background: var(--card); border-color: var(--line); }
+.sum-b.on { background: var(--navy); color: #fff; border-color: var(--navy); }
+.sum-b.on b { color: #fff; }
+.sum-b.on .dot { box-shadow: 0 0 0 2px rgba(255, 255, 255, .45); }
 .call-list { max-width: 720px; margin: 0 auto; padding: 8px 16px 110px; }
 .group {
   margin: 18px 0 8px; font-size: .95rem; color: var(--navy); display: flex; align-items: baseline; gap: 8px;
